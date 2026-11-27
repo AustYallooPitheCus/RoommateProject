@@ -1,0 +1,53 @@
+[이클립스에 가져오기]
+1. File > Import > General > Existing Projects into Workspace
+2. Select root directory에서 이 폴더(12주차_RoommateProject) 선택 > Finish
+   이클립스 안 프로젝트 이름은 RoommateProject_12 (11주차 RoommateProject랑 같이 열어둘 수 있게 이름을 바꿈)
+
+[실행]
+1. RoommateServer 실행 > Server Start (포트 30000)
+2. RoommateClientMain 실행 (사람 수만큼 여러 번)
+3. [네이버로 시작하기] > 계정 고르기 > 처음이면 프로필 설정
+   남자 naver01~10, 여자 naver11~20 (테스트계정.txt 참고)
+
+[참고]
+- 서버를 처음 켜면 profiles.txt가 생기면서 기본 회원 14명이 들어감 (남 naver01~07, 여 naver11~17)
+- naver08~10, naver18~20은 비워둠 -> 이걸로 로그인하면 프로필 설정 화면부터 나옴
+- 처음부터 다시 해보고 싶으면 서버 끄고 nicknames.txt, profiles.txt, likes.txt, dms.txt, uploads 폴더 지우기
+- 같은 계정은 동시에 두 번 로그인 안 됨
+
+[화면 이동 (12주차)]
+- 아래 탭: 홈 / 찜 / 채팅 / 게임 / 메뉴
+- 뒤로는 안으로 들어간 화면(프로필, 1:1 대화, 단체방, 프로필 수정)의 왼쪽 위 <
+- 게임 탭: 윷놀이, 할리갈리, 동의하기 게임 카드 + 모집 중인 윷놀이 목록 (누르면 그 방으로)
+- 단체방은 < 를 눌러야 나가짐 (아래 탭으로 다른 화면에 가도 방과 게임은 그대로)
+
+[도파민 윷놀이 (12주차)]
+1. 단체방 위쪽 [윷놀이] -> 모집 시작 (연 사람이 방장)
+2. 같은 방 사람이 [참가] (2~4명) -> 방장이 [시작]
+3. 내 차례면 [던지기]. 윷, 모, 잡기는 한 번 더
+4. 남은 결과를 고르고 판 위 내 말을 누르거나 [새 말 내기]
+5. 지옥(17번 칸)에 멈추면 출발점으로, 잉태(8번 칸)에 멈추면 말이 하나 늘어남
+6. 0번을 지나가야 완주. 늘어난 말까지 다 들어오면 승리
+7. 한 차례 20초. 넘기면 서버가 대신 던지고 대신 옮김
+- 제목줄 오른쪽 [채팅]/[게임]으로 판과 채팅을 오갈 수 있음
+
+[채팅 + 버튼]
+- 사진/동영상: 20MB까지. 서버 폴더 uploads/ 에 저장됨
+- 캡쳐: 누르면 앱이 잠깐 숨고 화면이 어두워짐 -> 보낼 부분 드래그 (ESC 취소)
+- 이모티콘: 입력칸 안 오른쪽 회색 웃는 얼굴 -> 키보드 자리에 이모티콘 판 (그림이 키보드로 바뀌고 다시 누르면 닫힘)
+  한 번 누르면 입력줄 위에 미리보기, 같은 걸 한 번 더 누르면(또는 [전송]) 보내짐. 임시 8종
+- 내 정보 보내기: 이름, 학번은 항상 / 전화번호는 체크했을 때만
+
+[12주차 서버 구조 (리팩토링, 기능은 11주차와 같음)]
+- RoommateServer   서버 화면 + 접속 받기
+- ServerContext    서버 전체가 같이 쓰는 상태 + 명령 -> 핸들러 표
+- UserService      사용자 1명 스레드: 읽기, 핸들러에 넘기기, 보내기, 정리
+- LoginHandler     /ACCOUNT_LIST /LOGIN /SETUP
+- MemberHandler    /BROWSE /USER /LIKE /LIKES /PROFILE_EDIT
+- DmHandler        /DM /DM_HISTORY /DM_LIST /DM_INFO
+- RoomHandler      /ROOM_CREATE /ROOM_ENTER /ROOM_EXIT /ROOM_MSG /ROOM_INFO
+- FileHandler      /FILE_UP /FILE_GET
+- EmoticonHandler  /DM_EMO /ROOM_EMO (12주차에 새로 붙인 기능)
+- YutHandler       /YUT_OPEN /YUT_JOIN /YUT_LEAVE /YUT_START /YUT_THROW /YUT_MOVE /YUT_LIST (윷놀이, 20초 타이머)
+- YutGame          윷놀이 규칙만 (네트워크 모름)
+- CommandHandler   위 핸들러들이 따르는 인터페이스

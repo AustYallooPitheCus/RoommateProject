@@ -1,0 +1,4 @@
+나눔스퀘어라운드 (NanumSquareRound)
+만든 곳: 네이버 (NAVER)
+라이선스: SIL Open Font License 1.1 (무료, 프로그램에 넣어서 배포 가능)
+받은 곳: npm 패키지 @fontsource 버전의 woff 파일을 ttf로 변환

@@ -1,0 +1,16 @@
+# 이클립스 빌드 결과
+bin/
+*.class
+
+# 서버 돌리면 생기는 데이터 (지우면 처음 상태로 돌아감)
+nicknames.txt
+profiles.txt
+likes.txt
+dms.txt
+uploads/
+
+# 기타
+.metadata/
+*.log
+.DS_Store
+Thumbs.db
