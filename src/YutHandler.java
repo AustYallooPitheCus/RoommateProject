@@ -1,22 +1,14 @@
 // YutHandler.java
-// 도파민 윷놀이 명령 처리 (12주차). 규칙 판정은 YutGame, 이 클래스는 매칭 / 친구 초대 / 게임 알림 / 20초 타이머
-// 12주차 수정: 처음엔 단체방 안에서 했는데, 게임은 게임 탭에서만 하도록 바꿈
-//   무조건 4명. 기본은 같은 성별 랜덤(익명) 매칭이고, 친구를 초대해서 같이 들어갈 수도 있음
-//   친구 = 내가 찜한 사람 + 1:1 대화한 사람 (접속 중이어야 초대 가능)
-//
-//   /YUT_FRIENDS                  초대할 수 있는 친구 목록
-//   /YUT_INVITE 닉                친구 초대 (파티가 없으면 내가 방장인 파티를 새로 만듦)
-//   /YUT_ACCEPT 방장닉, /YUT_DECLINE 방장닉     초대 받은 사람
-//   /YUT_PARTY_LEAVE              파티에서 나가기
-//   /YUT_QUEUE                    (방장) 시작. 4명이면 바로, 모자라면 빈자리를 랜덤 매칭으로 채움
-//   /YUT_CANCEL                   매칭 취소
+// 도파민 윷놀이 명령 처리 (12주차). 규칙 판정은 YutGame, 이 클래스는 게임 알림 / 20초 타이머
+// 사람 모으기(파티, 친구 초대, 랜덤 매칭)는 13주차에 Matchmaker로 뺌 (할리갈리도 같이 씀). 윷놀이는 무조건 4명
+//   /YUT_FRIENDS, /YUT_INVITE 닉, /YUT_ACCEPT, /YUT_DECLINE, /YUT_PARTY_LEAVE, /YUT_QUEUE, /YUT_CANCEL  -> Matchmaker
 //   /YUT_THROW, /YUT_MOVE 말번호 결과, /YUT_LEAVE(기권, 등수가 정해진 사람은 그냥 나가기)      게임 중
 // 누가 말을 다 들여보내면 /YUT_RANK 이름 등수, 2등까지 나오면 /YUT_END 게임 1등,2등 이유
 //
 // 게임 안에서는 모두 "토끼", "펭귄" 같은 동물 이름으로 부름 (판 정보는 모두에게 똑같이 보냄)
 // 시작할 때 /YUT_MATCH로 사람마다 "누가 누구인지" 표를 따로 줌. 같은 파티 친구면 닉네임, 아니면 -
 // 화면에는 모두 "플레이어1~4"(차례 순서)로 보이고, 친구만 그 밑에 (닉네임)이 붙음
-// 파티, 대기열, 게임은 전부 이 객체 하나로 잠금(synchronized). 사용자 스레드와 타이머 스레드가 같이 건드리기 때문
+// 게임은 이 객체 하나로 잠금(synchronized). 사용자 스레드와 타이머 스레드가 같이 건드리기 때문
 // 실패는 /YUT_FAIL 이유
 
 import java.util.ArrayList;
@@ -24,7 +16,6 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -37,25 +28,12 @@ public class YutHandler implements CommandHandler {
     static final int TURN_SECONDS = 20;
     static final String[] ANIMALS = { "토끼", "고양이", "다람쥐", "펭귄", "여우", "판다", "수달", "햄스터" };
 
-    // 같이 들어가는 묶음. 혼자 시작해도 1명짜리 파티를 만듦
-    static class Party {
-        UserService leader;
-        final List<UserService> members = new ArrayList<>();
-        final LinkedHashSet<UserService> pending = new LinkedHashSet<>(); // 초대했는데 아직 답 안 한 사람
-        boolean queued;
-
-        Party(UserService leader) {
-            this.leader = leader;
-            members.add(leader);
-        }
-    }
-
     // 진행 중인 게임 하나
     static class Session {
         final String id;
         final YutGame game;
         final Map<String, UserService> byName = new LinkedHashMap<>(); // 동물 이름 -> 사람
-        final Map<String, Party> partyOf = new HashMap<>();            // 동물 이름 -> 원래 파티 (친구끼리 알아보기용)
+        final Map<String, Matchmaker.Party> partyOf = new HashMap<>(); // 동물 이름 -> 원래 파티 (친구끼리 알아보기용)
         int version; // 20초 타이머 구분용. 행동이 있을 때마다 1씩 올라가서 예전 타이머는 무시됨
 
         Session(String id, YutGame game) {
@@ -66,9 +44,9 @@ public class YutHandler implements CommandHandler {
 
     private final ServerContext ctx;
     private final Random rnd = new Random();
-    private final Map<UserService, Party> parties = new HashMap<>();
-    private final Map<UserService, Session> playing = new HashMap<>();
-    private final List<Party> queue = new ArrayList<>(); // 먼저 들어온 순서
+    // 게임 중인 사람. Matchmaker가 잠금 없이 읽어서 ConcurrentHashMap (바꾸는 건 이 객체 잠금 안에서만)
+    private final Map<UserService, Session> playing = new java.util.concurrent.ConcurrentHashMap<>();
+    final Matchmaker mm;
     private int nextId = 1;
     // 20초 타이머. 데몬 스레드라 서버를 끄면 같이 꺼짐
     private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -79,248 +57,50 @@ public class YutHandler implements CommandHandler {
 
     YutHandler(ServerContext ctx) {
         this.ctx = ctx;
+        mm = new Matchmaker(ctx, "/YUT_", "윷놀이", YutGame.MAX_PLAYERS, YutGame.MAX_PLAYERS, playing::containsKey);
+        mm.setStarter(this::startGame);
     }
 
     @Override
     public String[] commands() {
-        return new String[] { "/YUT_FRIENDS", "/YUT_INVITE", "/YUT_ACCEPT", "/YUT_DECLINE", "/YUT_PARTY_LEAVE",
-                "/YUT_QUEUE", "/YUT_CANCEL", "/YUT_THROW", "/YUT_MOVE", "/YUT_LEAVE" };
+        List<String> c = new ArrayList<>(Arrays.asList(mm.commands()));
+        c.addAll(Arrays.asList("/YUT_THROW", "/YUT_MOVE", "/YUT_LEAVE"));
+        return c.toArray(new String[0]);
     }
 
     @Override
-    public synchronized void handle(UserService u, String cmd, String[] args) {
+    public void handle(UserService u, String cmd, String[] args) {
         String arg = args.length > 1 ? args[1] : "";
         String rest = args.length > 2 ? arg + " " + args[2] : arg;
-        try {
-            switch (cmd) {
-                case "/YUT_FRIENDS":     u.WriteOne("/YUT_FRIENDS " + friendList(u)); break;
-                case "/YUT_INVITE":      invite(u, arg); break;
-                case "/YUT_ACCEPT":      accept(u, arg); break;
-                case "/YUT_DECLINE":     decline(u, arg); break;
-                case "/YUT_PARTY_LEAVE": leaveParty(u); break;
-                case "/YUT_QUEUE":       enqueue(u); break;
-                case "/YUT_CANCEL":      cancel(u); break;
-                case "/YUT_THROW":       doThrow(session(u), name(u)); break;
-                case "/YUT_MOVE":        doMove(session(u), name(u), rest); break;
-                case "/YUT_LEAVE":       forfeit(u); break;
+        if (mm.handles(cmd)) { // 사람 모으기는 Matchmaker가 (자기 잠금으로)
+            try {
+                mm.handle(u, cmd, arg);
+            } catch (MatchException e) {
+                u.WriteOne("/YUT_FAIL " + e.getMessage());
             }
-        } catch (YutException e) {
-            u.WriteOne("/YUT_FAIL " + e.getMessage());
+            return;
         }
-    }
-
-    // ===================== 친구 =====================
-
-    // 찜했거나 1:1 대화를 한 사람
-    private boolean isFriend(UserService me, UserService other) {
-        String a = me.account().id, b = other.account().id;
-        if (ctx.store.isLiked(a, b)) return true;
-        for (ServerStore.Dm d : ctx.store.lastPerPartner(a)) {
-            if (d.from.equals(b) || d.to.equals(b)) return true;
-        }
-        return false;
-    }
-
-    // 다른 파티에 있거나, 매칭 중이거나, 게임 중이면 바쁨
-    private boolean busy(UserService u) {
-        if (playing.containsKey(u)) return true;
-        Party p = parties.get(u);
-        return p != null && (p.queued || p.members.size() > 1 || !p.pending.isEmpty());
-    }
-
-    // 닉:가능|바쁨|초대중,...  (같은 성별, 접속 중, 이미 내 파티에 있는 사람은 뺌)
-    private String friendList(UserService me) {
-        Party mine = parties.get(me);
-        StringBuilder sb = new StringBuilder();
-        for (UserService o : ctx.usersCopy()) {
-            if (o == me || !o.gender().equals(me.gender()) || !isFriend(me, o)) continue;
-            if (mine != null && mine.members.contains(o)) continue;
-            String state = mine != null && mine.pending.contains(o) ? "초대중" : busy(o) ? "바쁨" : "가능";
-            if (sb.length() > 0) sb.append(",");
-            sb.append(o.nick()).append(":").append(state);
-        }
-        return sb.length() == 0 ? "-" : sb.toString();
-    }
-
-    private UserService findUser(UserService me, String nick) throws YutException {
-        for (UserService o : ctx.usersCopy()) {
-            if (o.nick().equals(nick) && o.gender().equals(me.gender())) return o; // 다른 성별은 없는 사람처럼
-        }
-        throw new YutException("없는사용자");
-    }
-
-    // ===================== 파티 =====================
-
-    // 내 파티 (없으면 1명짜리로 새로 만듦)
-    private Party myParty(UserService u) {
-        return parties.computeIfAbsent(u, Party::new);
-    }
-
-    private void invite(UserService u, String nick) throws YutException {
-        if (playing.containsKey(u)) throw new YutException("이미게임중");
-        UserService target = findUser(u, nick);
-        if (target == u) throw new YutException("형식오류");
-        if (!isFriend(u, target)) throw new YutException("친구아님");
-        Party p = myParty(u);
-        if (p.leader != u) throw new YutException("방장아님");
-        if (p.queued) throw new YutException("매칭중");
-        if (p.members.contains(target) || p.pending.contains(target)) throw new YutException("이미초대");
-        if (busy(target)) throw new YutException("상대바쁨");
-        if (p.members.size() + p.pending.size() >= YutGame.MAX_PLAYERS) throw new YutException("인원초과");
-        p.pending.add(target);
-        target.WriteOne("/YUT_INVITED " + u.nick());
-        partyState(p);
-    }
-
-    private Party invitedBy(UserService u, String leaderNick) throws YutException {
-        for (Party p : new LinkedHashSet<>(parties.values())) {
-            if (p.leader.nick().equals(leaderNick) && p.pending.contains(u)) return p;
-        }
-        throw new YutException("초대만료");
-    }
-
-    private void accept(UserService u, String leaderNick) throws YutException {
-        if (playing.containsKey(u)) throw new YutException("이미게임중");
-        Party p = invitedBy(u, leaderNick);
-        p.pending.remove(u);
-        Party old = parties.get(u);
-        if (old != null) leaveParty(u); // 혼자 만들어 둔 파티가 있었으면 정리하고 넘어감
-        p.members.add(u);
-        parties.put(u, p);
-        partyState(p);
-    }
-
-    private void decline(UserService u, String leaderNick) throws YutException {
-        Party p = invitedBy(u, leaderNick);
-        p.pending.remove(u);
-        p.leader.WriteOne("/YUT_DECLINED " + u.nick());
-        partyState(p);
-    }
-
-    // 방장이 나가면 다음 사람이 방장. 매칭 중이었으면 매칭도 취소
-    private void leaveParty(UserService u) {
-        Party p = parties.remove(u);
-        if (p == null) return;
-        if (p.queued) unqueue(p);
-        p.members.remove(u);
-        u.WriteOne("/YUT_PARTY -");
-        if (p.leader == u) {
-            for (UserService inv : p.pending) inv.WriteOne("/YUT_INVITE_GONE " + u.nick());
-            p.pending.clear();
-            if (!p.members.isEmpty()) p.leader = p.members.get(0);
-        }
-        if (!p.members.isEmpty()) partyState(p);
-    }
-
-    // /YUT_PARTY 방장 멤버들 초대중인사람들  (파티 사람 모두에게)
-    private void partyState(Party p) {
-        StringBuilder m = new StringBuilder(), w = new StringBuilder();
-        for (UserService x : p.members) m.append(m.length() > 0 ? "," : "").append(x.nick());
-        for (UserService x : p.pending) w.append(w.length() > 0 ? "," : "").append(x.nick());
-        String msg = "/YUT_PARTY " + p.leader.nick() + " " + m + " " + (w.length() == 0 ? "-" : w.toString());
-        for (UserService x : p.members) x.WriteOne(msg);
-    }
-
-    // ===================== 매칭 =====================
-
-    private void enqueue(UserService u) throws YutException {
-        if (playing.containsKey(u)) throw new YutException("이미게임중");
-        Party p = myParty(u);
-        if (p.leader != u) throw new YutException("방장아님");
-        if (p.queued) throw new YutException("매칭중");
-        for (UserService inv : p.pending) inv.WriteOne("/YUT_INVITE_GONE " + u.nick()); // 답 안 한 초대는 취소
-        p.pending.clear();
-        p.queued = true;
-        queue.add(p);
-        partyState(p);
-        ctx.log("윷놀이 매칭 시작 " + u.nick() + " (" + p.members.size() + "명)");
-        match(u.gender());
-    }
-
-    private void cancel(UserService u) throws YutException {
-        Party p = parties.get(u);
-        if (p == null || !p.queued) throw new YutException("매칭안함");
-        unqueue(p);
-        for (UserService x : p.members) x.WriteOne("/YUT_CANCELED " + u.nick());
-        if (p.members.size() == 1) parties.remove(u); // 혼자였으면 파티도 정리
-        else partyState(p);
-    }
-
-    private void unqueue(Party p) {
-        p.queued = false;
-        queue.remove(p);
-        queueState(p.leader.gender());
-    }
-
-    // 대기열을 4명짜리 자리(방)로 나눠 봄. 먼저 온 파티부터, 들어갈 수 있는 첫 자리에 넣음
-    // 매칭 중인 사람은 자기 자리가 몇 명 찼는지 실시간으로 보고(/YUT_QUEUED), 4명이 차면 바로 시작
-    private List<List<Party>> groups(String gender) {
-        List<List<Party>> bins = new ArrayList<>();
-        List<Integer> size = new ArrayList<>();
-        for (Party p : queue) {
-            if (!p.leader.gender().equals(gender)) continue;
-            int n = p.members.size();
-            int at = -1;
-            for (int b = 0; b < bins.size(); b++) {
-                if (size.get(b) + n <= YutGame.MAX_PLAYERS) {
-                    at = b;
-                    break;
+        synchronized (this) {
+            try {
+                switch (cmd) {
+                    case "/YUT_THROW": doThrow(session(u), name(u)); break;
+                    case "/YUT_MOVE":  doMove(session(u), name(u), rest); break;
+                    case "/YUT_LEAVE": forfeit(u); break;
                 }
-            }
-            if (at < 0) {
-                bins.add(new ArrayList<>());
-                size.add(0);
-                at = bins.size() - 1;
-            }
-            bins.get(at).add(p);
-            size.set(at, size.get(at) + n);
-        }
-        return bins;
-    }
-
-    private static int count(List<Party> bin) {
-        int n = 0;
-        for (Party p : bin) n += p.members.size();
-        return n;
-    }
-
-    private void match(String gender) {
-        boolean again = true;
-        while (again) {
-            again = false;
-            for (List<Party> bin : groups(gender)) {
-                if (count(bin) == YutGame.MAX_PLAYERS) {
-                    start(bin);
-                    again = true;
-                    break;
-                }
+            } catch (YutException e) {
+                u.WriteOne("/YUT_FAIL " + e.getMessage());
             }
         }
-        queueState(gender);
     }
 
-    // 매칭 중인 사람에게 "내 자리에 지금 몇 명 모였는지" 알림 (/YUT_QUEUED 모인인원)
-    private void queueState(String gender) {
-        for (List<Party> bin : groups(gender)) {
-            int n = count(bin);
-            for (Party p : bin) for (UserService x : p.members) x.WriteOne("/YUT_QUEUED " + n);
-        }
+    boolean playing(UserService u) {
+        return playing.containsKey(u);
     }
 
-    private void start(List<Party> pick) {
+    // Matchmaker가 4명을 모으면 부름 (Matchmaker 잠금 안에서 불리고, 여기서 게임 잠금을 잡음)
+    private synchronized void startGame(List<UserService> people, List<Matchmaker.Party> from) {
         List<String> names = new ArrayList<>(Arrays.asList(ANIMALS));
         Collections.shuffle(names, rnd);
-        List<UserService> people = new ArrayList<>();
-        List<Party> from = new ArrayList<>();
-        for (Party p : pick) {
-            queue.remove(p);
-            p.queued = false;
-            for (UserService x : p.members) {
-                people.add(x);
-                from.add(p);
-                parties.remove(x); // 게임에 들어가면 파티는 끝 (끝나고 다시 모임)
-            }
-        }
         // 차례 순서도 섞음 (파티끼리 붙어서 시작하지 않게)
         List<Integer> order = new ArrayList<>();
         for (int i = 0; i < people.size(); i++) order.add(i);
@@ -478,16 +258,15 @@ public class YutHandler implements CommandHandler {
 
     // ===================== 연결이 끊김 =====================
 
-    synchronized void disconnected(UserService u) {
-        try {
-            if (playing.containsKey(u)) forfeit(u);
-        } catch (YutException e) {
-            // 이미 빠짐
+    // 게임에서 빠지고(게임 잠금), 그다음 파티, 초대에서 빠짐(Matchmaker 잠금). 두 잠금을 겹쳐 잡지 않음
+    void disconnected(UserService u) {
+        synchronized (this) {
+            try {
+                if (playing.containsKey(u)) forfeit(u);
+            } catch (YutException e) {
+                // 이미 빠짐
+            }
         }
-        leaveParty(u);
-        // 나를 초대해 둔 파티에서도 빼기
-        for (Party p : new LinkedHashSet<>(parties.values())) {
-            if (p.pending.remove(u)) partyState(p);
-        }
+        mm.disconnected(u);
     }
 }

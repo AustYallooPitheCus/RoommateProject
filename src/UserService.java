@@ -151,6 +151,7 @@ public class UserService extends Thread {
         if (removed) {
             ctx.rooms.leaveAll(this);
             ctx.yut.disconnected(this); // 윷놀이 매칭, 파티, 게임에서 빠지기
+            ctx.halli.disconnected(this); // 할리갈리도
             ctx.log("퇴장 " + UserName + ", 현재 " + ctx.userCount() + "명");
         }
     }

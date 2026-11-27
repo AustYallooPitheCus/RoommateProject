@@ -44,7 +44,7 @@ import javax.swing.JButton;
 import javax.swing.JPanel;
 import javax.swing.Timer;
 
-public class YutView extends JPanel {
+public class YutView extends JPanel implements GameView {
 
     private static final long serialVersionUID = 1L;
     // 말 색 (판의 보라색 칸과 헷갈리지 않게 진한 색으로)

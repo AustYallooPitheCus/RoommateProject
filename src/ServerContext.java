@@ -29,6 +29,7 @@ public class ServerContext {
     final RoomHandler rooms;
     final FileHandler files;
     final YutHandler yut;
+    final HalliHandler halli;
     private final Map<String, CommandHandler> handlers = new HashMap<>();
 
     public ServerContext(Consumer<String> log) {
@@ -47,6 +48,8 @@ public class ServerContext {
         register(new EmoticonHandler(members, dms, rooms)); // 12주차 이모티콘 (새 기능은 이렇게 한 줄로 붙임)
         yut = new YutHandler(this);
         register(yut); // 12주차 도파민 윷놀이 (게임 탭 매칭)
+        halli = new HalliHandler(this);
+        register(halli); // 13주차 죽음의 피흘리기 할리갈리
     }
 
     private void register(CommandHandler h) {
@@ -101,6 +104,13 @@ public class ServerContext {
         synchronized (users) {
             return users.remove(u);
         }
+    }
+
+    // 다른 미니게임에서 바쁜지 (파티, 매칭, 게임 중). 잠금 없이 읽기만 함
+    boolean busyElsewhere(UserService u, Matchmaker me) {
+        if (yut.mm != me && yut.mm.involved(u)) return true;
+        if (halli != null && halli.mm != me && halli.mm.involved(u)) return true;
+        return false;
     }
 
     // 사용자 목록 복사본 (윷놀이 친구 찾기용)

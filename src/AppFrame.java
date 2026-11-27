@@ -112,6 +112,7 @@ public class AppFrame extends JFrame {
     };
     private final JLabel inviteText = UI.title("", 13.5f);
     private String inviter;
+    private MatchScreen inviteFrom; // 어느 게임 초대인지
 
     final LoginScreen login;
     final SetupScreen setup;
@@ -124,6 +125,7 @@ public class AppFrame extends JFrame {
     final Screens.Menu menu;
     final Screens.Games games;
     final YutScreen yut;
+    final HalliScreen halli;
 
     // ===== 네트워크 =====
     private Socket socket;
@@ -166,6 +168,7 @@ public class AppFrame extends JFrame {
         menu = add(new Screens.Menu(this), "menu");
         games = add(new Screens.Games(this), "game");
         yut = add(new YutScreen(this), "yut");
+        halli = add(new HalliScreen(this), "halli");
 
         // 윷놀이 초대 알림 (어느 화면에 있든 위쪽에 뜸)
         inviteBar.setBounds(12, 10, W - 24, 62);
@@ -181,13 +184,13 @@ public class AppFrame extends JFrame {
         no.setBounds(W - 24 - 124, 15, 54, 30);
         yes.setBounds(W - 24 - 64, 15, 54, 30);
         no.addActionListener(e -> {
-            send("/YUT_DECLINE " + inviter);
+            send(inviteFrom.prefix + "DECLINE " + inviter);
             inviteBar.setVisible(false);
         });
         yes.addActionListener(e -> {
-            send("/YUT_ACCEPT " + inviter);
+            send(inviteFrom.prefix + "ACCEPT " + inviter);
             inviteBar.setVisible(false);
-            if (!"yut".equals(current)) go("yut", true);
+            if (!inviteFrom.key.equals(current)) go(inviteFrom.key, true);
         });
         inviteBar.add(no);
         inviteBar.add(yes);
@@ -342,6 +345,7 @@ public class AppFrame extends JFrame {
         closeSocket();
         room.leave(); // 소켓은 이미 닫혀서 보내는 건 없고 화면 상태만 정리 (서버는 연결이 끊기면 알아서 방에서 뺌)
         yut.reset();
+        halli.reset();
         inviteBar.setVisible(false);
         back.clear();
         myNick = null;
@@ -492,39 +496,11 @@ public class AppFrame extends JFrame {
                     break;
                 }
                 case "/ROOM_FAIL": toast(reasonText(rest)); break;
-                // ===== 도파민 윷놀이 (12주차, 게임 탭에서만) =====
-                case "/YUT_PARTY": yut.party(rest); break;
-                case "/YUT_QUEUED": yut.queued(rest); break;
-                case "/YUT_CANCELED": yut.canceled(rest); break;
-                case "/YUT_FRIENDS": yut.friends(rest); break;
-                case "/YUT_MATCH": yut.match(rest); break;
-                case "/YUT_START":
-                case "/YUT_BOARD":
-                case "/YUT_TURN":
-                case "/YUT_THROWN":
-                case "/YUT_MOVED":
-                case "/YUT_SKIP":
-                case "/YUT_TIMEOUT":
-                case "/YUT_OUT":
-                case "/YUT_RANK": // 12주차 수정: 이게 빠져 있어서 1등 딱지, 1등 팝업이 안 떴음
-                case "/YUT_END": yut.onGame(cmd, rest); break;
-                case "/YUT_INVITED": // 방장닉
-                    inviter = rest.trim();
-                    inviteText.setText(inviter + "님이 윷놀이에 초대했어요");
-                    inviteBar.setVisible(true);
-                    root.setComponentZOrder(inviteBar, 0);
-                    root.repaint();
-                    break;
-                case "/YUT_INVITE_GONE":
-                    if (rest.trim().equals(inviter) && inviteBar.isVisible()) {
-                        inviteBar.setVisible(false);
-                        toast(inviter + "님의 초대가 취소됐어요");
-                    }
-                    break;
-                case "/YUT_DECLINED": toast(rest.trim() + "님이 초대를 거절했어요"); break;
-                case "/YUT_FAIL": toast(reasonText(rest.trim())); break;
                 default:
-                    System.out.println("모르는 메시지: " + msg);
+                    // 미니게임: 명령 앞부분을 보고 그 게임 화면에 통째로 넘김 (윷놀이 /YUT_, 할리갈리 /HG_)
+                    if (cmd.startsWith(yut.prefix)) yut.route(cmd, rest);
+                    else if (cmd.startsWith(halli.prefix)) halli.route(cmd, rest);
+                    else System.out.println("모르는 메시지: " + msg);
             }
         } catch (RuntimeException e) { // 메시지 형식이 이상해도 앱은 계속 돌아가게
             System.out.println("메시지 처리 오류 [" + msg + "] " + e);
@@ -556,6 +532,23 @@ public class AppFrame extends JFrame {
     }
 
     // 서버 실패 이유 -> 화면에 보여줄 말
+    // 미니게임 초대 알림 (어느 화면에 있든 위쪽에)
+    void showInvite(MatchScreen from, String leader) {
+        inviteFrom = from;
+        inviter = leader;
+        inviteText.setText(leader + "님이 " + from.gameName + "에 초대했어요");
+        inviteBar.setVisible(true);
+        root.setComponentZOrder(inviteBar, 0);
+        root.repaint();
+    }
+
+    void inviteGone(String leader) {
+        if (leader.equals(inviter) && inviteBar.isVisible()) {
+            inviteBar.setVisible(false);
+            toast(inviter + "님의 초대가 취소됐어요");
+        }
+    }
+
     static String reasonText(String reason) {
         switch (reason) {
             case "이미접속중": return "그 계정은 이미 접속 중이에요";
@@ -585,6 +578,12 @@ public class AppFrame extends JFrame {
             case "이미초대": return "이미 초대한 사람이에요";
             case "상대바쁨": return "그 친구는 지금 다른 게임 중이에요";
             case "초대만료": return "이미 끝난 초대예요";
+            case "다른게임중": return "다른 미니게임을 하는 중이에요";
+            case "인원부족": return "2명 이상 모여야 시작할 수 있어요";
+            case "종정산중": return "종 정산 중이에요";
+            case "페이크없음": return "내는 척은 3번까지만 할 수 있어요";
+            case "탈락함": return "이미 탈락했어요";
+            case "게임끝": return "이미 끝난 게임이에요";
             case "내차례아님": return "내 차례가 아니에요";
             case "던질기회없음": return "던질 기회가 없어요. 말을 옮겨요";
             case "먼저던지기": return "먼저 윷을 던져요";

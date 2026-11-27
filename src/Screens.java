@@ -454,12 +454,12 @@ public class Screens {
             header("미니게임", "같이 놀면서 룸메랑 친해져요");
             String[][] games = {
                 { "yut", "도파민 윷놀이", "4명 / 랜덤 매칭, 친구 초대", "지금 가능" },
-                { "halli", "죽음의 피흘리기 할리갈리", "2~4명 / 체력제, 페이크 액션", "14주차 오픈" },
+                { "halli", "죽음의 피흘리기 할리갈리", "2~4명 / 체력제, 내는 척 3번", "지금 가능" },
                 { "agree", "동의하기 게임", "혼자 / 가입할 때 했던 약관 퍼즐", "14주차 오픈" },
             };
             for (int i = 0; i < games.length; i++) {
                 final String[] gm = games[i];
-                Runnable click = gm[0].equals("yut") ? () -> app.go("yut", true)
+                Runnable click = gm[0].equals("yut") || gm[0].equals("halli") ? () -> app.go(gm[0], true)
                         : () -> app.toast(gm[1] + "은(는) 준비 중이에요 (" + gm[3] + ")");
                 GameCard c = new GameCard(gm[0], gm[1], gm[2], gm[3], click);
                 c.setBounds(20, 88 + i * 104, W - 40, 94);
