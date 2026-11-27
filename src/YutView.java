@@ -116,12 +116,15 @@ public class YutView extends JPanel {
     private final ArrayDeque<String[]> queue = new ArrayDeque<>();
     private long busyUntil;                   // 이 시각까지는 모션 중
     private long animStart = -1;              // 던지기 모션 시작 시각 (-1이면 없음)
+    private boolean throwResultSound;         // 던지기 결과 소리를 냈는지
     private MoveAnim mv;                      // 이동 모션 (없으면 null)
     private final Timer frame;
 
     // 이동 모션 하나 (/YUT_MOVED 하나)
     static class MoveAnim {
         String nick;
+        int stepsDone = 0;                    // 소리: 지금까지 내려앉은 칸 수
+        boolean capSound, hellSound, birthSound;
         final List<Integer> ids = new ArrayList<>();
         int to;
         final List<double[]> pts = new ArrayList<>();  // 지나가는 점 (처음 = 출발 점)
@@ -138,7 +141,7 @@ public class YutView extends JPanel {
     // ===== 부품 =====
     private final JButton throwBtn = UI.pill("던지기", UI.LAVENDER, Color.WHITE);
     private final JButton closeBtn = UI.pill("확인", UI.LAVENDER, Color.WHITE);
-    private final JButton watchBtn = UI.pill("계속 구경", UI.LAVENDER, Color.WHITE), leaveBtn = UI.soft("나가기");
+    private final JButton watchBtn = UI.pill("더 구경하기", UI.LAVENDER, Color.WHITE), leaveBtn = UI.soft("나가기");
     private int boardX, boardY, trayX, trayY;
 
     public YutView(AppFrame app) {
@@ -175,6 +178,11 @@ public class YutView extends JPanel {
             repaint();
         });
         frame = new Timer(16, e -> {
+            if (mv != null) moveSounds(mv);
+            if (animStart >= 0 && !throwResultSound && animTime() >= FLY_MS) { // 윷가락이 떨어진 순간 결과 소리 (낙만)
+                throwResultSound = true;
+                if (lastResult.equals("낙")) Sound.play("nak");
+            }
             if (!busy()) { // 모션 끝 -> 기다리던 메시지 반영
                 animStart = -1;
                 mv = null;
@@ -222,6 +230,7 @@ public class YutView extends JPanel {
         log = "";
         tick.stop();
         frame.stop();
+        Sound.stopBgm();
         busyUntil = 0;
         animStart = -1;
         mv = null;
@@ -257,8 +266,8 @@ public class YutView extends JPanel {
         trayX = 24 + (w - 36) / 2;
         trayY = by;
         closeBtn.setBounds((w - 160) / 2, h / 2 + 30, 160, 42);
-        watchBtn.setBounds(w / 2 - 128, boardY + 170, 120, 40);
-        leaveBtn.setBounds(w / 2 + 8, boardY + 170, 120, 40);
+        leaveBtn.setBounds(w / 2 - 128, boardY + 200, 120, 42);
+        watchBtn.setBounds(w / 2 + 8, boardY + 200, 120, 42);
     }
 
     // ===================== 서버 메시지 =====================
@@ -306,6 +315,7 @@ public class YutView extends JPanel {
         switch (cmd) {
             case "/YUT_START": // 순서 말수 지옥 잉태
                 started = true;
+                Sound.startBgm();
                 endText = null;
                 players.clear();
                 out.clear();
@@ -349,7 +359,10 @@ public class YutView extends JPanel {
                     throwsLeft = 1;
                     results.clear();
                     picked = null;
-                    if (current.equals(me)) log = "내 차례예요! 윷을 던져요";
+                    if (current.equals(me)) {
+                        log = "내 차례예요! 윷을 던져요";
+                        Sound.play("turn");
+                    }
                 }
                 seconds = Integer.parseInt(a[1]);
                 tick.restart();
@@ -359,10 +372,12 @@ public class YutView extends JPanel {
                 sticks = a[2];
                 throwsLeft--;
                 if (a[1].equals("윷") || a[1].equals("모")) throwsLeft++;
-                if (a[1].equals("낙")) throwsLeft = 0;
                 setResults(a[3]);
-                log = show(a[0]) + ": " + a[1] + (a[1].equals("윷") || a[1].equals("모") ? "! 한 번 더" : a[1].equals("낙") ? "! 차례가 끝나요" : "");
+                String nakText = results.isEmpty() ? "! 차례가 끝나요" : "! 앞에 나온 " + String.join(", ", results) + "만 써요";
+                log = show(a[0]) + ": " + a[1] + (a[1].equals("윷") || a[1].equals("모") ? "! 한 번 더" : a[1].equals("낙") ? nakText : "");
                 animStart = System.currentTimeMillis();
+                throwResultSound = false;
+                Sound.play("throw");
                 startAnim(ANIM_MS);
                 break;
             }
@@ -404,9 +419,12 @@ public class YutView extends JPanel {
                 ranks.put(a[0], Integer.parseInt(a[1]));
                 log = (a[0].equals(me) ? "내가" : show(a[0]) + "님이") + " " + a[1] + "등! 남은 사람끼리 2등을 가려요";
                 if (a[0].equals(me)) rankPopup = true;
+                Sound.play("rank");
                 break;
             case "/YUT_END": // 1등,2등 이유
                 tick.stop();
+                Sound.stopBgm();
+                if (a[1].equals("완주") || a[1].equals("기권")) Sound.play("rank");
                 picked = null;
                 rankPopup = false;
                 if (a[1].equals("나감")) { // 내가 기권했거나, 등수가 정해진 뒤 나감
@@ -487,6 +505,31 @@ public class YutView extends JPanel {
         m.total = m.walk + m.cap + m.fx + 120;
         m.t0 = System.currentTimeMillis();
         return m;
+    }
+
+    // 이동 모션 중 소리: 한 칸 내려앉을 때마다 콩, 부딪혀 잡을 때, 불구덩이에 빠질 때
+    private void moveSounds(MoveAnim m) {
+        long e = System.currentTimeMillis() - m.t0;
+        long acc = 0;
+        int landed = 0;
+        for (int ms : m.segMs) {
+            acc += ms;
+            if (e >= acc) landed++;
+        }
+        if (m.done) landed = Math.min(landed, m.segMs.size() - 1); // 내 자리로 날아 들어가는 구간은 콩 안 함
+        m.stepsDone = landed; // 한 칸 소리는 뺌 (12주차 수정)
+        if (!m.capSound && !m.victims.isEmpty() && e >= m.walk) {
+            m.capSound = true;
+            Sound.play("capture");
+        }
+        if (!m.hellSound && m.hell && e >= m.walk + m.cap) {
+            m.hellSound = true;
+            Sound.play("hell");
+        }
+        if (!m.birthSound && m.birthId >= 0 && e >= m.walk + m.cap) {
+            m.birthSound = true;
+            Sound.play("birth");
+        }
     }
 
     private static double[] pt(int[] p) {
@@ -723,20 +766,26 @@ public class YutView extends JPanel {
         }
 
         if (started && players.contains(me) && endText == null) drawTray(g2, w);
-        if (rankPopup && endText == null && !busy()) { // 내가 1등: 구경할지 나갈지
-            g2.setColor(new Color(255, 255, 255, 235));
-            g2.fill(new RoundRectangle2D.Float(w / 2f - 150, boardY + 70, 300, 156, 22, 22));
+        if (rankPopup && endText == null && !busy()) { // 내가 1등: 안내 + [나가기] [더 구경하기] 팝업
+            g2.setColor(new Color(40, 30, 70, 90)); // 뒤 화면 어둡게
+            g2.fill(new RoundRectangle2D.Float(0, 0, w - 1, h - 1, 22, 22));
+            float cx = w / 2f - 150, cyy = boardY + 30;
+            g2.setColor(new Color(0, 0, 0, 30));
+            g2.fill(new RoundRectangle2D.Float(cx, cyy + 4, 300, 232, 24, 24));
+            g2.setColor(Color.WHITE);
+            g2.fill(new RoundRectangle2D.Float(cx, cyy, 300, 232, 24, 24));
             g2.setColor(GOLD);
             g2.setStroke(new BasicStroke(2f));
-            g2.draw(new RoundRectangle2D.Float(w / 2f - 150, boardY + 70, 300, 156, 22, 22));
+            g2.draw(new RoundRectangle2D.Float(cx, cyy, 300, 232, 24, 24));
+            drawMedal(g2, w / 2.0, cyy + 54, 27, ranks.get(me));
             g2.setColor(UI.TEXT);
-            g2.setFont(UI.font(Font.BOLD, 26f));
+            g2.setFont(UI.font(Font.BOLD, 24f));
             String t = ranks.get(me) + "등 했어요!";
-            g2.drawString(t, (w - g2.getFontMetrics().stringWidth(t)) / 2, boardY + 116);
+            g2.drawString(t, (w - g2.getFontMetrics().stringWidth(t)) / 2, cyy + 124);
             g2.setColor(UI.TEXT_SUB);
             g2.setFont(UI.font(Font.PLAIN, 12f));
             String t2 = "2등이 나올 때까지 게임은 계속돼요";
-            g2.drawString(t2, (w - g2.getFontMetrics().stringWidth(t2)) / 2, boardY + 146);
+            g2.drawString(t2, (w - g2.getFontMetrics().stringWidth(t2)) / 2, cyy + 150);
         }
         if (throwing) drawThrow(g2);
 
@@ -796,12 +845,10 @@ public class YutView extends JPanel {
             }
             Integer rk = ranks.get(p);
             if (rk != null) { // 등수 배지
-                g2.setColor(rk == 1 ? GOLD : new Color(0xA9B4C2));
-                g2.fill(new RoundRectangle2D.Float(x + cw - 33, 10, 24, 14, 14, 14));
-                g2.setColor(Color.WHITE);
-                g2.setFont(UI.font(Font.BOLD, 9.5f));
-                String rt = rk + "등";
-                g2.drawString(rt, x + cw - 21 - g2.getFontMetrics().stringWidth(rt) / 2f, 20.5f);
+                g2.setColor(rk == 1 ? GOLD : new Color(0xA9B4C2)); // 칸 테두리도 금색(2등은 은색)
+                g2.setStroke(new BasicStroke(2f));
+                g2.draw(new RoundRectangle2D.Float(x, 6, cw - 6, 56, 14, 14));
+                drawMedal(g2, x + cw - 19, 19, 10.5, rk); // 등수 딱지
             }
             if (gone) {
                 g2.setColor(UI.TEXT_SUB);
@@ -1078,6 +1125,41 @@ public class YutView extends JPanel {
             }
         }
         drawStack(g2, x, y, r, c, count, alpha);
+    }
+
+    // 등수 딱지: 리본 두 줄 + 금색(1등) / 은색(2등) 메달
+    static void drawMedal(Graphics2D g2, double cx, double cy, double r, int rank) {
+        Color main = rank == 1 ? GOLD : new Color(0xB8C2CE), dark = rank == 1 ? new Color(0xC98A12) : new Color(0x7C8794);
+        Path2D.Double left = new Path2D.Double(), right = new Path2D.Double();
+        left.moveTo(cx - r * 0.55, cy + r * 0.3);
+        left.lineTo(cx - r * 0.95, cy + r * 1.45);
+        left.lineTo(cx - r * 0.55, cy + r * 1.25);
+        left.lineTo(cx - r * 0.3, cy + r * 1.55);
+        left.lineTo(cx - r * 0.05, cy + r * 0.5);
+        left.closePath();
+        right.moveTo(cx + r * 0.55, cy + r * 0.3);
+        right.lineTo(cx + r * 0.95, cy + r * 1.45);
+        right.lineTo(cx + r * 0.55, cy + r * 1.25);
+        right.lineTo(cx + r * 0.3, cy + r * 1.55);
+        right.lineTo(cx + r * 0.05, cy + r * 0.5);
+        right.closePath();
+        g2.setColor(new Color(0xE5508F));
+        g2.fill(left);
+        g2.setColor(new Color(0x3D7BF0));
+        g2.fill(right);
+        g2.setColor(new Color(0, 0, 0, 40));
+        g2.fill(new Ellipse2D.Double(cx - r, cy - r + r * 0.15, r * 2, r * 2));
+        g2.setColor(main);
+        g2.fill(new Ellipse2D.Double(cx - r, cy - r, r * 2, r * 2));
+        g2.setColor(dark);
+        g2.setStroke(new BasicStroke((float) Math.max(1, r / 9)));
+        g2.draw(new Ellipse2D.Double(cx - r * 0.75, cy - r * 0.75, r * 1.5, r * 1.5));
+        g2.draw(new Ellipse2D.Double(cx - r, cy - r, r * 2, r * 2));
+        g2.setColor(Color.WHITE);
+        String t = r > 16 ? String.valueOf(rank) : rank + "등";
+        g2.setFont(UI.font(Font.BOLD, (float) (r > 16 ? r * 0.95 : r * 0.82)));
+        int tw = g2.getFontMetrics().stringWidth(t);
+        g2.drawString(t, (float) (cx - tw / 2.0), (float) (cy + r * (r > 16 ? 0.34 : 0.3)));
     }
 
     // 지옥에 빠질 때 불길이 크게 솟음

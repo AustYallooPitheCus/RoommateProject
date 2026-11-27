@@ -3,7 +3,7 @@
 // 메시지 보내기, 20초 타이머는 YutHandler가 함
 //
 // 규칙 (제안서 + 12주차에 정한 것)
-//   - 2~4명, 말 4개씩. 도 개 걸 윷 모, 빽도(1칸 뒤로), 낙(5%, 그 차례 끝)
+//   - 4명, 말 4개씩. 도 개 걸 윷 모, 빽도(1칸 뒤로), 낙(5%, 그 던지기만 무효. 앞에 나온 결과가 없으면 차례 끝)
 //   - 윷, 모, 잡기는 한 번 더. 던질 기회를 다 쓴 다음에 말을 옮김
 //   - 내 말끼리 같은 칸이면 업혀서 같이 움직임. 모서리(5, 10), 가운데(22)에 멈추면 다음에 지름길
 //   - 0번(마지막 칸)을 지나가야만 완주. 0번에 멈추면 그 칸에 서 있음
@@ -119,11 +119,10 @@ public class YutGame {
         checkTurn(nick);
         if (throwsLeft == 0) throw new YutException("던질기회없음");
         throwsLeft--;
-        if (rnd.nextDouble() < NAK) { // 낙: 이번 차례에 모은 결과까지 전부 없어지고 차례 끝
-            results.clear();
-            throwsLeft = 0;
-            return new Throw("낙", "0000");
-        }
+        // 낙: 이번 던지기만 무효 (12주차 수정)
+        //   첫 던지기에서 나오면 남은 결과가 없으니 그대로 차례 끝
+        //   윷, 모, 잡기로 한 번 더 던지다 나오면 앞에서 나온 결과(도 개 걸 윷 모)는 살아 있어서 그걸로 옮김
+        if (rnd.nextDouble() < NAK) return new Throw("낙", "0000");
         StringBuilder sb = new StringBuilder();
         int flat = 0;
         for (int i = 0; i < 4; i++) {

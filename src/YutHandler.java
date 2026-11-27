@@ -252,31 +252,58 @@ public class YutHandler implements CommandHandler {
         queueState(p.leader.gender());
     }
 
-    // 먼저 온 파티부터 4명이 될 때까지 담아봄. 넘치는 파티는 건너뜀
-    private void match(String gender) {
-        while (true) {
-            List<Party> pick = new ArrayList<>();
-            int n = 0;
-            for (Party p : queue) {
-                if (!p.leader.gender().equals(gender)) continue;
-                if (n + p.members.size() > YutGame.MAX_PLAYERS) continue;
-                pick.add(p);
-                n += p.members.size();
-                if (n == YutGame.MAX_PLAYERS) break;
+    // 대기열을 4명짜리 자리(방)로 나눠 봄. 먼저 온 파티부터, 들어갈 수 있는 첫 자리에 넣음
+    // 매칭 중인 사람은 자기 자리가 몇 명 찼는지 실시간으로 보고(/YUT_QUEUED), 4명이 차면 바로 시작
+    private List<List<Party>> groups(String gender) {
+        List<List<Party>> bins = new ArrayList<>();
+        List<Integer> size = new ArrayList<>();
+        for (Party p : queue) {
+            if (!p.leader.gender().equals(gender)) continue;
+            int n = p.members.size();
+            int at = -1;
+            for (int b = 0; b < bins.size(); b++) {
+                if (size.get(b) + n <= YutGame.MAX_PLAYERS) {
+                    at = b;
+                    break;
+                }
             }
-            if (n < YutGame.MAX_PLAYERS) break;
-            start(pick);
+            if (at < 0) {
+                bins.add(new ArrayList<>());
+                size.add(0);
+                at = bins.size() - 1;
+            }
+            bins.get(at).add(p);
+            size.set(at, size.get(at) + n);
+        }
+        return bins;
+    }
+
+    private static int count(List<Party> bin) {
+        int n = 0;
+        for (Party p : bin) n += p.members.size();
+        return n;
+    }
+
+    private void match(String gender) {
+        boolean again = true;
+        while (again) {
+            again = false;
+            for (List<Party> bin : groups(gender)) {
+                if (count(bin) == YutGame.MAX_PLAYERS) {
+                    start(bin);
+                    again = true;
+                    break;
+                }
+            }
         }
         queueState(gender);
     }
 
-    // 매칭 중인 사람에게 "지금 대기 몇 명" 알림
+    // 매칭 중인 사람에게 "내 자리에 지금 몇 명 모였는지" 알림 (/YUT_QUEUED 모인인원)
     private void queueState(String gender) {
-        int n = 0;
-        for (Party p : queue) if (p.leader.gender().equals(gender)) n += p.members.size();
-        for (Party p : queue) {
-            if (!p.leader.gender().equals(gender)) continue;
-            for (UserService x : p.members) x.WriteOne("/YUT_QUEUED " + n);
+        for (List<Party> bin : groups(gender)) {
+            int n = count(bin);
+            for (Party p : bin) for (UserService x : p.members) x.WriteOne("/YUT_QUEUED " + n);
         }
     }
 

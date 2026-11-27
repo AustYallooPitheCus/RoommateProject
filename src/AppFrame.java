@@ -506,6 +506,7 @@ public class AppFrame extends JFrame {
                 case "/YUT_SKIP":
                 case "/YUT_TIMEOUT":
                 case "/YUT_OUT":
+                case "/YUT_RANK": // 12주차 수정: 이게 빠져 있어서 1등 딱지, 1등 팝업이 안 떴음
                 case "/YUT_END": yut.onGame(cmd, rest); break;
                 case "/YUT_INVITED": // 방장닉
                     inviter = rest.trim();
