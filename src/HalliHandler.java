@@ -14,7 +14,7 @@
 //   /HG_RING 게임 이름 결과 피               결과: 맞음, 늦음, 틀림
 //   /HG_ROUND 게임 이긴사람 깎인사람들        맞은 종 정산 (이긴 사람이 카드를 가져감. 피 깎이는 사람은 없어서 깎인사람들은 -)
 //   /HG_BOARD 게임 이름:피:과일,개수:남은카드;...
-//   /HG_OUT 게임 이름                        탈락이나 나감
+//   /HG_OUT 게임 이름 이유                   이유: 피(피 0), 카드(카드 0장인데 남이 종을 맞힘), 나감
 //   /HG_END 게임 등수순서 이유
 // 실패는 /HG_FAIL 이유
 
@@ -174,7 +174,7 @@ public class HalliHandler implements CommandHandler {
         if (r.equals("이미침")) return;
         send(s, "/HG_RING " + s.id + " " + name + " " + r + " " + s.game.hp(name));
         if (r.equals("틀림")) {
-            if (!s.game.alive(name)) out(s, name);
+            if (!s.game.alive(name)) out(s, name, "피");
             if (s.game.isOver()) end(s, "완주");
         } else if (r.equals("맞음")) { // 잠깐 다른 사람 치는 순서를 모은 뒤 정산. 그동안 차례 타이머는 멈춤
             s.version++;
@@ -187,13 +187,14 @@ public class HalliHandler implements CommandHandler {
         HalliGame.Round r = s.game.resolve();
         send(s, "/HG_ROUND " + s.id + " " + r.winner + " " + (r.losers.isEmpty() ? "-" : String.join(",", r.losers)));
         send(s, "/HG_BOARD " + s.id + " " + s.game.boardText());
-        for (String o : r.out) out(s, o);
+        for (String o : r.out) out(s, o, "피");
+        for (String o : r.noCards) out(s, o, "카드");
         if (s.game.isOver()) end(s, "목표");
         else turn(s);
     }
 
-    private void out(Session s, String name) {
-        send(s, "/HG_OUT " + s.id + " " + name);
+    private void out(Session s, String name, String why) {
+        send(s, "/HG_OUT " + s.id + " " + name + " " + why);
     }
 
     private void end(Session s, String reason) {
@@ -212,7 +213,7 @@ public class HalliHandler implements CommandHandler {
         if (!s.game.alive(name) || s.game.isOver()) return;
         boolean wasTurn = s.game.current().equals(name);
         s.game.leave(name);
-        out(s, name);
+        out(s, name, "나감");
         send(s, "/HG_BOARD " + s.id + " " + s.game.boardText());
         if (s.game.isOver()) end(s, "기권");
         else if (wasTurn && !s.game.bellOpen()) turn(s);

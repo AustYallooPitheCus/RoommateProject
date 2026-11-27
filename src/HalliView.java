@@ -64,6 +64,7 @@ public class HalliView extends JPanel implements GameView {
     private String endText, endSub = "", endNote = "";
     private boolean outPopup;                                           // 내가 탈락: [나가기] [더 구경하기]
     private boolean bellOpen;                                           // 맞은 종 정산 중 (잠깐 카드 못 냄)
+    private String outWhy = "피";                                       // 내가 탈락한 이유 (피, 카드)
     private int seconds;
     private final Timer tick;
 
@@ -331,12 +332,18 @@ public class HalliView extends JPanel implements GameView {
                 log = show(a[0]) + (a[0].equals(me) ? "가" : "님이") + " 먼저 쳤어요! 피 +1, 카드도 가져가요";
                 break;
             }
-            case "/HG_OUT": // 이름 (피 0으로 탈락하거나 나감)
+            case "/HG_OUT": { // 이름 이유(피, 카드, 나감)
                 out.add(a[0]);
                 top.remove(a[0]);
-                log = show(a[0]) + (a[0].equals(me) ? "는 탈락했어요" : "님 탈락");
-                if (a[0].equals(me)) outPopup = true;
+                cards.remove(a[0]);
+                String why = a.length > 1 ? a[1] : "피";
+                if (a[0].equals(me)) outWhy = why; // 내 탈락 이유만 (남이 탈락해도 내 팝업 글은 그대로)
+                String w = why.equals("카드") ? "카드를 다 잃어서 탈락" : why.equals("나감") ? "나갔어요" : "피를 다 흘려서 탈락";
+                log = (a[0].equals(me) ? "나는 " : show(a[0]) + "님 ") + w;
+                if (a[0].equals(me) && !why.equals("나감")) outPopup = true;
+                if (a[0].equals(me) && why.equals("카드")) Sound.play("nak");
                 break;
+            }
             case "/HG_END": // 등수순서 이유
                 tick.stop();
                 outPopup = false;
@@ -473,7 +480,8 @@ public class HalliView extends JPanel implements GameView {
             g2.drawString(t, (w - g2.getFontMetrics().stringWidth(t)) / 2, 456);
         }
 
-        if (outPopup && endText == null) drawPopup(g2, w, h, "탈락했어요", "피를 다 흘렸어요. 끝날 때까지 구경할 수 있어요");
+        if (outPopup && endText == null) drawPopup(g2, w, h, "탈락했어요",
+                outWhy.equals("카드") ? "카드가 없는데 판의 카드를 뺏겼어요. 구경할 수 있어요" : "피를 다 흘렸어요. 끝날 때까지 구경할 수 있어요");
         if (endText != null) {
             g2.setColor(new Color(255, 255, 255, 220));
             g2.fill(new RoundRectangle2D.Float(0, 0, w - 1, h - 1, 22, 22));

@@ -12,6 +12,8 @@
 //   내는 척(페이크): 1판에 3번까지, 내 차례에만. 손이 나가는 모습만 보이고 카드는 안 나감
 //   피가 0이 되면 탈락(그 사람 맨 위 카드는 판에서 안 보임). 마지막 1명이 남으면 끝
 //   살아 있는 사람 모두 카드가 없고 종을 칠 일도 없으면 끝 (피 많은 순서로 등수)
+//   내 카드가 0장인데 다른 사람이 종을 맞혀 판의 카드를 다 가져가면 나는 더 할 게 없으므로 탈락 (13주차 추가)
+//     (카드 0장이어도 내가 먼저 종을 맞히면 판의 카드를 가져와서 계속할 수 있음)
 // 종이 맞았을 때는 바로 정산하지 않고 잠깐(서버가 정함) 다른 사람이 치는 순서를 모은 뒤 resolve()로 정산
 
 import java.util.ArrayList;
@@ -45,7 +47,8 @@ public class HalliGame {
     public static class Round {
         public String winner;
         public final List<String> losers = new ArrayList<>();
-        public final List<String> out = new ArrayList<>(); // 이번에 탈락한 사람
+        public final List<String> out = new ArrayList<>(); // 이번에 탈락한 사람 (피)
+        public final List<String> noCards = new ArrayList<>(); // 카드가 없는데 남이 종을 쳐서 카드를 다 가져가 탈락한 사람
     }
 
     private final Random rnd;
@@ -224,6 +227,12 @@ public class HalliGame {
         for (String l : r.losers) if (hurt(l)) r.out.add(l);
         if (alive(r.winner)) {
             hand.get(r.winner).addAll(table);
+            // 카드 0장인 사람은 판의 카드를 뺏겨서 더 낼 게 없음 -> 탈락
+            for (String p : players) {
+                if (over || p.equals(r.winner) || !alive(p) || cardsLeft(p) > 0) continue;
+                eliminate(p);
+                r.noCards.add(p);
+            }
             hp.put(r.winner, hp.get(r.winner) + 1);
             if (hp.get(r.winner) >= WIN_HP) over = true; // 8방울 모음 -> 이김 (등수는 피 많은 순서라 1등)
         }
